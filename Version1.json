@@ -1,0 +1,197 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "logicAppName": {
+            "type": "String",
+            "metadata": {
+                "description": "Name of the logic app."
+            }
+        },
+        "logicAppLocation": {
+            "defaultValue": "[resourceGroup().location]",
+            "allowedValues": ["eastasia", "southeastasia", "centralus", "eastus", "eastus2", "westus", "northcentralus", "southcentralus", "northeurope", "westeurope", "japanwest", "japaneast", "brazilsouth", "australiaeast", "australiasoutheast", "southindia", "centralindia", "westindia", "canadacentral", "canadaeast", "westcentralus", "westus2", "[resourceGroup().location]"],
+            "type": "String",
+            "metadata": {
+                "description": "Location of the logic app."
+            }
+        },
+        "sharepointonline_Connection_Name": {
+            "defaultValue": "sharepointonline",
+            "type": "String",
+            "metadata": {
+                "description": "Name of the connection."
+            }
+        }
+    },
+    "resources": [{
+        "type": "Microsoft.Logic/workflows",
+        "name": "[parameters('logicAppName')]",
+        "apiVersion": "2016-06-01",
+        "location": "[parameters('logicAppLocation')]",
+        "properties": {
+            "state": "Disabled",
+            "definition": {
+                "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                "contentVersion": "1.0.0.0",
+                "parameters": {
+                    "$connections": {
+                        "defaultValue": {},
+                        "type": "Object"
+                    },
+                    "$authentication": {
+                        "defaultValue": {},
+                        "type": "SecureObject"
+                    }
+                },
+                "triggers": {
+                    "Cuando_se_crea_un_archivo_en_una_carpeta": {
+                        "recurrence": {
+                            "interval": 5,
+                            "frequency": "Minute"
+                        },
+                        "metadata": {
+                            "%252fCases": "/Cases",
+                            "flowSystemMetadata": {
+                                "swaggerOperationId": "OnNewFile"
+                            }
+                        },
+                        "type": "ApiConnection",
+                        "inputs": {
+                            "host": {
+                                "connection": {
+                                    "name": "@parameters('$connections')['sharepointonline']['connectionId']"
+                                }
+                            },
+                            "method": "get",
+                            "path": "/datasets/@{encodeURIComponent(encodeURIComponent('https://ctplc.sharepoint.com/sites/FileSystemDev'))}/triggers/onnewfile",
+                            "queries": {
+                                "folderId": "%252fCases",
+                                "queryParametersSingleEncoded": true,
+                                "inferContentType": true
+                            },
+                            "authentication": "@parameters('$authentication')"
+                        }
+                    }
+                },
+                "actions": {
+                    "HTTP": {
+                        "runAfter": {},
+                        "type": "Http",
+                        "inputs": {
+                            "method": "POST",
+                            "uri": "https://sistemadearchivoscta.com/api/get-name-file-cases",
+                            "headers": {
+                                "Content-Type": "application/json; charset=utf-8",
+                                "Accept": "application/json; charset=utf-8"
+                            },
+                            "body": {
+                                "fullpath": "@{base64ToString(triggerOutputs()['headers']['x-ms-file-path-encoded'])}"
+                            }
+                        }
+                    },
+                    "Condición": {
+                        "actions": {
+                            "Análisis_del_archivo_JSON": {
+                                "runAfter": {},
+                                "type": "ParseJson",
+                                "inputs": {
+                                    "content": "@body('HTTP')",
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "data": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "fullPath": {
+                                                        "type": "string"
+                                                    },
+                                                    "namefile": {
+                                                        "type": "string"
+                                                    },
+                                                    "path": {
+                                                        "type": "string"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            "Enviar_una_solicitud_HTTP_a_SharePoint": {
+                                "runAfter": {
+                                    "Análisis_del_archivo_JSON": ["Succeeded"]
+                                },
+                                "metadata": {
+                                    "flowSystemMetadata": {
+                                        "swaggerOperationId": "HttpRequest"
+                                    }
+                                },
+                                "type": "ApiConnection",
+                                "inputs": {
+                                    "host": {
+                                        "connection": {
+                                            "name": "@parameters('$connections')['sharepointonline']['connectionId']"
+                                        }
+                                    },
+                                    "method": "post",
+                                    "body": {
+                                        "method": "POST",
+                                        "uri": "_api/web/getfilebyserverrelativeurl('/sites/FileSystemDev@{base64ToString(triggerOutputs()['headers']['x-ms-file-path-encoded'])}')/moveto(newurl='/sites/FileSystemDev/@{body('Análisis_del_archivo_JSON')?['data']?['fullPath']}',flags=1)",
+                                        "headers": {
+                                            "Content-Type": "application/json;odata=verbose",
+                                            "Accept": "application/json"
+                                        }
+                                    },
+                                    "path": "/datasets/@{encodeURIComponent(encodeURIComponent('https://ctplc.sharepoint.com/sites/FileSystemDev'))}/httprequest",
+                                    "authentication": "@parameters('$authentication')"
+                                }
+                            }
+                        },
+                        "runAfter": {
+                            "HTTP": ["Succeeded"]
+                        },
+                        "expression": {
+                            "equals": ["@outputs('HTTP')['statusCode']", 200]
+                        },
+                        "type": "If"
+                    }
+                },
+                "outputs": {}
+            },
+            "parameters": {
+                "$connections": {
+                    "value": {
+                        "sharepointonline": {
+                            "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('logicAppLocation'), '/managedApis/', 'sharepointonline')]",
+                            "connectionId": "[resourceId('Microsoft.Web/connections', parameters('sharepointonline_Connection_Name'))]",
+                            "connectionName": "[parameters('sharepointonline_Connection_Name')]"
+                        }
+                    }
+                }
+            },
+            "runtimeConfiguration": {
+                "collections": {
+                    "maximumItemCount": 5000
+                },
+                "performanceProfile": {
+                    "throttles": {
+                        "mode": "Low"
+                    }
+                }
+            }
+        },
+        "dependsOn": ["[resourceId('Microsoft.Web/connections', parameters('sharepointonline_Connection_Name'))]"]
+    }, {
+        "type": "Microsoft.Web/connections",
+        "name": "[parameters('sharepointonline_Connection_Name')]",
+        "apiVersion": "2016-06-01",
+        "location": "[parameters('logicAppLocation')]",
+        "properties": {
+            "api": {
+                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('logicAppLocation'), '/managedApis/', 'sharepointonline')]"
+            },
+            "displayName": "[parameters('sharepointonline_Connection_Name')]"
+        }
+    }]
+}
